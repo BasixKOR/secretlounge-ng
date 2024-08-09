@@ -61,6 +61,7 @@ types = NumericEnum([
 	"ERR_INVALID_TRIP_FORMAT",
 	"ERR_NO_TRIPCODE",
 	"ERR_MEDIA_LIMIT",
+	"ERR_POLLS_UNSUPPORTED",
 
 	"USER_INFO",
 	"USER_INFO_MOD",
@@ -133,6 +134,7 @@ format_strs = {
 		"<code>name#pass</code>" + em("."),
 	types.ERR_NO_TRIPCODE: em("You don't have a tripcode set."),
 	types.ERR_MEDIA_LIMIT: em("You can't send media or forward messages at this time, try again later."),
+	types.ERR_POLLS_UNSUPPORTED: em("Your message has not been sent. Polls are not supported, sorry."),
 
 	types.USER_INFO: lambda warnings, cooldown, **_:
 		"<b>id</b>: {id}, <b>username</b>: {username!x}, <b>rank</b>: {rank_i} ({rank})\n"+
@@ -167,6 +169,7 @@ format_strs = {
 		"  /adminhelp - show this text\n"+
 		"  /adminsay &lt;message&gt; - send an official admin message\n"+
 		"  /motd &lt;message&gt; - set the welcome message (HTML formatted)\n"+
+		"  /privacy &lt;message&gt; - set the privacy policy (HTML formatted)\n"+
 		"  /uncooldown &lt;id | username&gt; - remove cooldown from an user\n"+
 		"  /mod &lt;username&gt; - promote an user to the moderator rank\n"+
 		"  /admin &lt;username&gt; - promote an user to the admin rank\n"+

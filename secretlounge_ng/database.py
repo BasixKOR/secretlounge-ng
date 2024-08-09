@@ -13,8 +13,10 @@ from .globals import *
 class SystemConfig():
 	def __init__(self):
 		self.motd = None
+		self.privacy = None
 	def defaults(self):
 		self.motd = ""
+		self.privacy = ""
 
 USER_PROPS = (
 	"id", "username", "realname", "rank", "joined", "left", "lastActive",
@@ -22,8 +24,12 @@ USER_PROPS = (
 	"hideKarma", "debugEnabled", "tripcode"
 )
 
+ID_ALPHA = "0123456789abcdefghijklmnopqrstuv"
+
 class User():
 	__slots__ = USER_PROPS
+	global_salt = b""
+
 	id: int
 	username: Optional[str]
 	realname: str
@@ -39,6 +45,11 @@ class User():
 	hideKarma: bool
 	debugEnabled: bool
 	tripcode: Optional[str]
+
+	@staticmethod
+	def setSalt(salt):
+		assert all(isinstance(v, int) for v in salt)
+		User.global_salt = salt
 	def __init__(self):
 		for k in USER_PROPS:
 			setattr(self, k, None)
@@ -64,10 +75,9 @@ class User():
 		return self.rank < 0
 	def getObfuscatedId(self):
 		salt = date.today().toordinal()
-		if salt & 0xff == 0: salt >>= 8 # zero bits are bad for hashing
-		value = (self.id * salt) & 0xffffff
-		alpha = "0123456789abcdefghijklmnopqrstuv"
-		return ''.join(alpha[n%32] for n in (value, value>>5, value>>10, value>>15))
+		value = fnv32a([self.id, salt], [User.global_salt])
+		# stringify 20 bits
+		return ''.join(ID_ALPHA[n%32] for n in (value, value>>5, value>>10, value>>15))
 	def getObfuscatedKarma(self):
 		for cutoff in (100, 50, 10):
 			if abs(self.karma) >= cutoff:
@@ -120,10 +130,12 @@ class ModificationContext():
 	def __enter__(self):
 		return self.obj
 	def __exit__(self, exc_type, *_):
-		if exc_type is None:
-			self.func(self.obj)
-		if self.lock is not None:
-			self.lock.release()
+		try:
+			if exc_type is None:
+				self.func(self.obj)
+		finally:
+			if self.lock is not None:
+				self.lock.release()
 
 class Database():
 	def __init__(self):
@@ -179,20 +191,18 @@ class JSONDatabase(Database):
 		return
 	@staticmethod
 	def _systemConfigToDict(config):
-		return {"motd": config.motd}
+		return {"motd": config.motd, "privacy": config.privacy}
 	@staticmethod
 	def _systemConfigFromDict(d):
 		if d is None: return None
 		config = SystemConfig()
 		config.motd = d["motd"]
+		config.privacy = d.get("privacy")
 		return config
 	@staticmethod
 	def _userToDict(user):
-		props = ["id", "username", "realname", "rank", "joined", "left",
-			"lastActive", "cooldownUntil", "blacklistReason", "warnings",
-			"warnExpiry", "karma", "hideKarma", "debugEnabled", "tripcode"]
 		d = {}
-		for prop in props:
+		for prop in USER_PROPS:
 			value = getattr(user, prop)
 			if isinstance(value, datetime):
 				value = int(value.replace(tzinfo=timezone.utc).timestamp())
@@ -203,12 +213,13 @@ class JSONDatabase(Database):
 		if d is None: return None
 		props = ["id", "username", "realname", "rank", "blacklistReason",
 			"warnings", "karma", "hideKarma", "debugEnabled"]
-		props_d = [("tripcode", None)]
+		props_d = {"tripcode": None}
 		dateprops = ["joined", "left", "lastActive", "cooldownUntil", "warnExpiry"]
+		assert set(props).union(props_d.keys()).union(dateprops) == set(USER_PROPS)
 		user = User()
 		for prop in props:
 			setattr(user, prop, d[prop])
-		for prop, default in props_d:
+		for prop, default in props_d.items():
 			setattr(user, prop, d.get(prop, default))
 		for prop in dateprops:
 			if d[prop] is not None:
@@ -277,12 +288,13 @@ class SQLiteDatabase(Database):
 			self.db.close()
 	@staticmethod
 	def _systemConfigToDict(config):
-		return {"motd": config.motd}
+		return {"motd": config.motd, "privacy": config.privacy}
 	@staticmethod
 	def _systemConfigFromDict(d):
 		if len(d) == 0: return None
 		config = SystemConfig()
 		config.motd = d["motd"]
+		config.privacy = d.get("privacy")
 		return config
 	@staticmethod
 	def _userToDict(user):
@@ -383,4 +395,5 @@ CREATE TABLE IF NOT EXISTS `users` (
 		sql = "REPLACE INTO system_config(`name`, `value`) VALUES (?, ?)"
 		with self.lock:
 			for k, v in d.items():
-				self.db.execute(sql, (k, v))
+				if v is not None:
+					self.db.execute(sql, (k, v))

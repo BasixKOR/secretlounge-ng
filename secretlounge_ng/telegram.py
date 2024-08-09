@@ -14,6 +14,7 @@ from .globals import *
 # module constants
 MEDIA_FILTER_TYPES = ("photo", "animation", "document", "video", "video_note", "sticker")
 CAPTIONABLE_TYPES = ("photo", "audio", "animation", "document", "video", "voice")
+COPYABLE_TYPES = ("story", "location", "venue", "contact", "video_note")
 HIDE_FORWARD_FROM = set([
 	"anonymize_bot", "anonfacebot", "anonymousforwarderbot", "anonomiserbot",
 	"anonymous_forwarder_nashenasbot", "anonymous_forward_bot", "mirroring_bot",
@@ -24,7 +25,8 @@ HIDE_FORWARD_FROM = set([
 	"forwards_cover_bot", "forwardshidebot", "forwardscoversbot",
 	"noforwardssourcebot", "antiforwarded_v2_bot", "forwardcoverzbot",
 ])
-VENUE_PROPS = ("title", "address", "foursquare_id", "foursquare_type", "google_place_id", "google_place_type")
+
+assert len(set(CAPTIONABLE_TYPES).intersection(COPYABLE_TYPES)) == 0
 
 TMessage = telebot.types.Message
 
@@ -36,13 +38,12 @@ message_queue = None
 registered_commands = {}
 
 # settings
-allow_documents: bool = None
 linked_network: dict = None
 
 def init(config: dict, _db, _ch):
-	global bot, db, ch, message_queue, allow_documents, linked_network
-	if config["bot_token"] == "":
-		logging.error("No telegram token specified.")
+	global bot, db, ch, message_queue, linked_network
+	if not config.get("bot_token") or ":" not in config["bot_token"]:
+		logging.error("No Telegram bot token specified")
 		exit(1)
 
 	logging.getLogger("urllib3").setLevel(logging.WARNING) # very noisy with debug otherwise
@@ -59,36 +60,47 @@ def init(config: dict, _db, _ch):
 	if linked_network is not None and not isinstance(linked_network, dict):
 		logging.error("Wrong type for 'linked_network'")
 		exit(1)
+	message_reaction_upvote = config.get("message_reaction_upvote", True)
 
-	types = ["text", "location", "venue"]
+	types = [
+		"text", "location", "venue", "story", "animation", "audio", "photo",
+		"sticker", "video", "video_note", "voice", "poll"
+	]
 	if allow_contacts:
 		types += ["contact"]
 	if allow_documents:
 		types += ["document"]
-	types += ["animation", "audio", "photo", "sticker", "video", "video_note", "voice"]
 
 	cmds = [
 		"start", "stop", "users", "info", "motd", "toggledebug", "togglekarma",
 		"version", "source", "modhelp", "adminhelp", "modsay", "adminsay", "mod",
 		"admin", "warn", "delete", "remove", "uncooldown", "blacklist", "s", "sign",
-		"tripcode", "t", "tsign", "cleanup"
+		"tripcode", "t", "tsign", "cleanup", "privacy"
 	]
 	for c in cmds: # maps /<c> to the function cmd_<c>
 		c = c.lower()
 		registered_commands[c] = globals()["cmd_" + c]
 
-	@bot.message_handler(content_types=types)
-	def wrapper(*args, **kwargs):
+	def wrap(func, *args, **kwargs):
 		try:
-			relay(*args, **kwargs)
+			func(*args, **kwargs)
 		except Exception as e:
-			logging.exception("Exception raised in event handler")
+			logging.exception("Exception raised in event handler %r", func)
+
+	bot.message_handler(
+		content_types=types, chat_types=["private"]
+	)(partial(wrap, relay))
+	if message_reaction_upvote:
+		bot.message_reaction_handler()(partial(wrap, message_reaction))
 
 def run():
 	assert not bot.threaded
 	while True:
 		try:
-			bot.polling(non_stop=True, long_polling_timeout=49)
+			bot.polling(
+				non_stop=True, long_polling_timeout=49,
+				allowed_updates=["message", "message_reaction"]
+			)
 		except Exception as e:
 			# you're not supposed to call .polling() more than once but I'm left with no choice
 			logging.warning("%s while polling Telegram, retrying.", type(e).__name__)
@@ -386,24 +398,13 @@ def resend_message(chat_id, ev: TMessage, reply_to=None, force_caption: Optional
 		return bot.send_video(chat_id, ev.video.file_id, **kwargs)
 	elif ev.content_type == "voice":
 		return bot.send_voice(chat_id, ev.voice.file_id, **kwargs)
-	elif ev.content_type == "video_note":
-		return bot.send_video_note(chat_id, ev.video_note.file_id, **kwargs)
-	elif ev.content_type == "location":
-		for prop in ("latitude", "longitude", "horizontal_accuracy"):
-			kwargs[prop] = getattr(ev.location, prop)
-		return bot.send_location(chat_id, **kwargs)
-	elif ev.content_type == "venue":
-		kwargs["latitude"] = ev.venue.location.latitude
-		kwargs["longitude"] = ev.venue.location.longitude
-		for prop in VENUE_PROPS:
-			kwargs[prop] = getattr(ev.venue, prop)
-		return bot.send_venue(chat_id, **kwargs)
-	elif ev.content_type == "contact":
-		for prop in ("phone_number", "first_name", "last_name", "vcard"):
-			kwargs[prop] = getattr(ev.contact, prop)
-		return bot.send_contact(chat_id, **kwargs)
+	elif ev.content_type in COPYABLE_TYPES:
+		return bot.copy_message(chat_id, ev.chat.id, ev.message_id)
 	elif ev.content_type == "sticker":
 		return bot.send_sticker(chat_id, ev.sticker.file_id, **kwargs)
+	elif ev.content_type == "poll":
+		# we generally shouldn't get here, but if we do ignore silently
+		return
 	else:
 		raise NotImplementedError("content_type = %s" % ev.content_type)
 
@@ -575,13 +576,22 @@ def cmd_info(ev):
 	return send_answer(ev, core.get_info_mod(c_user, reply_msid), True)
 
 @takesArgument(optional=True)
-def cmd_motd(ev, arg):
+def cmd_motd(ev: TMessage, arg):
 	c_user = UserContainer(ev.from_user)
 
-	if arg == "":
-		send_answer(ev, core.get_motd(c_user), reply_to=True)
-	else:
-		send_answer(ev, core.set_motd(c_user, arg), reply_to=True)
+	m = core.set_system_text(c_user, "motd", arg) if arg else None
+	if not m:
+		m = core.get_system_text(c_user, "motd")
+	send_answer(ev, m, reply_to=True)
+
+@takesArgument(optional=True)
+def cmd_privacy(ev: TMessage, arg):
+	c_user = UserContainer(ev.from_user)
+
+	m = core.set_system_text(c_user, "privacy", arg) if arg else None
+	if not m:
+		m = core.get_system_text(c_user, "privacy")
+	send_answer(ev, m, reply_to=True)
 
 cmd_toggledebug = wrap_core(core.toggle_debug)
 cmd_togglekarma = wrap_core(core.toggle_karma)
@@ -711,6 +721,9 @@ def relay(ev: TMessage):
 # `caption_text` can be a FormattedMessage that overrides the caption of media
 # `signed` and `tripcode` indicate if the message is signed or tripcoded respectively
 def relay_inner(ev: TMessage, *, caption_text=None, signed=False, tripcode=False):
+	if not is_forward(ev) and ev.content_type == "poll":
+		return send_answer(ev, rp.Reply(rp.types.ERR_POLLS_UNSUPPORTED))
+
 	is_media = is_forward(ev) or ev.content_type in MEDIA_FILTER_TYPES
 	msid = core.prepare_user_message(UserContainer(ev.from_user), calc_spam_score(ev),
 		is_media=is_media, signed=signed, tripcode=tripcode)
@@ -778,3 +791,17 @@ def cmd_tsign(ev: TMessage, arg):
 	relay_inner(ev, tripcode=True)
 
 cmd_t = cmd_tsign # alias
+
+def message_reaction(ev: telebot.types.MessageReactionUpdated):
+	if ev.chat.type != "private" or ev.user is None:
+		return
+	c_user = UserContainer(ev.user)
+	# treat a :+1: reaction as an upvote
+	match = lambda r: r.type == "emoji" and "\U0001F44D" in r.emoji
+	if not any(match(r) for r in ev.old_reaction) and any(match(r) for r in ev.new_reaction):
+		# make up a Message so the reply code can work as usual
+		fake_ev = telebot.types.Message(ev.message_id, ev.user, 0, ev.chat, "dummy", {}, "")
+		reply_msid = ch.lookupMapping(ev.chat.id, data=ev.message_id)
+		if reply_msid is None:
+			return send_answer(fake_ev, rp.Reply(rp.types.ERR_NOT_IN_CACHE), True)
+		return send_answer(fake_ev, core.give_karma(c_user, reply_msid), True)

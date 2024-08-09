@@ -48,6 +48,9 @@ def init(config: dict, _db, _ch):
 	if config.get("locale"):
 		rp.localization = import_module("..replies_" + config["locale"], __name__).localization
 
+	if config.get("secret_salt"):
+		User.setSalt(bytes.fromhex(config["secret_salt"]))
+
 	# initialize db if empty
 	if db.getSystemConfig() is None:
 		c = SystemConfig()
@@ -296,18 +299,21 @@ def get_users(user: User):
 		total=active + inactive + black)
 
 @requireUser
-def get_motd(user: User):
-	motd = db.getSystemConfig().motd
-	if not motd:
-		return
-	return rp.Reply(rp.types.CUSTOM, text=motd)
+def get_system_text(user: User, key: str):
+	if key not in ("motd", "privacy"):
+		raise ValueError()
+	v = getattr(db.getSystemConfig(), key)
+	if v:
+		return rp.Reply(rp.types.CUSTOM, text=v)
 
 @requireUser
 @requireRank(RANKS.admin)
-def set_motd(user: User, arg):
+def set_system_text(user: User, key: str, arg: str):
+	if key not in ("motd", "privacy"):
+		raise ValueError()
 	with db.modifySystemConfig() as config:
-		config.motd = arg
-	logging.info("%s set motd to: %r", user, arg)
+		setattr(config, key, arg)
+	logging.info("%s set %s to: %r", user, key, arg)
 	return rp.Reply(rp.types.SUCCESS)
 
 @requireUser
