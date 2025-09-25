@@ -2,7 +2,7 @@ import logging
 from datetime import datetime, timedelta
 from threading import Lock
 from importlib import import_module
-from typing import Optional
+from typing import Optional, Dict
 
 from . import replies as rp
 from .globals import *
@@ -15,14 +15,14 @@ from .util import genTripcode
 db = None
 ch = None
 spam_scores = None
-sign_last_used = {} # uid -> datetime
+sign_last_used: Dict[int, datetime] = {}
 
 # settings
 
 blacklist_contact: str = None
 enable_signing: bool = None
 allow_remove_command: bool = None
-media_limit_period: Optional[timedelta]  = None
+media_limit_period: Optional[timedelta] = None
 sign_interval: timedelta = None
 
 class IUserContainer():
@@ -214,12 +214,20 @@ def user_join(c_user: IUserContainer):
 			with db.modifyUser(id=user.id) as user:
 				updateUserFromEvent(user, c_user)
 			return err
+
 		# user rejoins
+		absenceTime = datetime.now() - user.left
 		with db.modifyUser(id=user.id) as user:
 			updateUserFromEvent(user, c_user)
 			user.setLeft(False)
 		logging.info("%s rejoined chat", user)
-		return rp.Reply(rp.types.CHAT_JOIN)
+		ret = [rp.Reply(rp.types.CHAT_JOIN)]
+
+		motd = db.getSystemConfig().motd
+		if motd and absenceTime / timedelta(days=1) >= MOTD_REMIND_DAYS:
+			ret.append(rp.Reply(rp.types.CUSTOM, text=motd))
+
+		return ret
 
 	# create new user
 	user = User()
@@ -234,7 +242,7 @@ def user_join(c_user: IUserContainer):
 	ret = [rp.Reply(rp.types.CHAT_JOIN)]
 
 	motd = db.getSystemConfig().motd
-	if motd != "":
+	if motd:
 		ret.append(rp.Reply(rp.types.CUSTOM, text=motd))
 
 	return ret
