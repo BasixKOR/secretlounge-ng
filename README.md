@@ -119,7 +119,7 @@ Working around this is possible with some disadvantages, but has not been implem
 
 6. **Is this code maintained?**
 
-This (upstream) codebase is in active use [over here](https://t.me/s/secretloungeproject).
+This codebase is in active use [over here](https://t.me/s/secretloungeproject).
 Updates are made either if there's something broken or when the author feels like it.
 
 ## Notable forks
