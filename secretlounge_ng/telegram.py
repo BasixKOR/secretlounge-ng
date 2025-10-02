@@ -15,7 +15,7 @@ from .globals import *
 MEDIA_FILTER_TYPES = ("photo", "animation", "document", "video", "video_note", "sticker")
 CAPTIONABLE_TYPES = ("photo", "audio", "animation", "document", "video", "voice")
 COPYABLE_TYPES = ("story", "location", "venue", "contact", "video_note")
-HIDE_FORWARD_FROM = set([
+HIDE_FORWARD_FROM = set(s.lower() for s in [
 	"anonymize_bot", "anonfacebot", "anonymousforwarderbot", "anonomiserbot",
 	"anonymous_forwarder_nashenasbot", "anonymous_forward_bot", "mirroring_bot",
 	"anonymizbot", "forwardscoverbot", "anonymousmcjnbot", "mirroringbot",
@@ -26,11 +26,10 @@ HIDE_FORWARD_FROM = set([
 	"noforwardssourcebot", "antiforwarded_v2_bot", "forwardcoverzbot",
 	"captionremove_bot", "caption_remove_bot", "nocaption_bot",
 	"captionsremovebot", "captionremover_bot", "forwardcoversrobot",
-	"v2forwardscoverbot", "album_collector_bot",
+	"v2forwardscoverbot", "album_collector_bot", "forwards_cover_kr_bot",
 ])
 
 assert len(set(CAPTIONABLE_TYPES).intersection(COPYABLE_TYPES)) == 0
-assert not any(any(c.isupper() for c in s) for s in HIDE_FORWARD_FROM)
 
 TMessage = telebot.types.Message
 
