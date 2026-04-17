@@ -475,15 +475,20 @@ def delete_message_inner(user_id, id):
 			return
 		break
 
-# look at given Exception `e`, force-leave user if bot was blocked
+# look at given exception to force-leave the user if bot was blocked
 # returns True if message sending should be retried
-def check_telegram_exc(e, user_id):
-	errmsgs = ["bot was blocked by the user", "user is deactivated",
-		"PEER_ID_INVALID", "bot can't initiate conversation"]
+def check_telegram_exc(e: telebot.apihelper.ApiException, user_id):
+	errmsgs = ("bot was blocked by the user", "user is deactivated",
+		"bot can't initiate conversation", "have no write access to the chat")
 	if any(msg in e.result.text for msg in errmsgs):
 		if user_id is not None:
 			core.force_user_leave(user_id)
 		return False
+
+	if "Bad Gateway" in e.result.text or "Gateway Timeout" in e.result.text:
+		logging.warning("Trouble reaching API, waiting a bit")
+		time.sleep(1.5)
+		return True # retry
 
 	if "Too Many Requests" in e.result.text:
 		d = json.loads(e.result.text)["parameters"]["retry_after"]
@@ -492,7 +497,9 @@ def check_telegram_exc(e, user_id):
 		time.sleep(d)
 		return True # retry
 
-	if "VOICE_MESSAGES_FORBIDDEN" in e.result.text:
+	# silently ignore these
+	ignoremsgs = ("VOICE_MESSAGES_FORBIDDEN", "message to delete not found")
+	if any(msg in e.result.text for msg in ignoremsgs):
 		return False
 
 	logging.exception("API exception")
