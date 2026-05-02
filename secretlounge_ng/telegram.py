@@ -8,7 +8,7 @@ from functools import partial
 
 from . import core
 from . import replies as rp
-from .util import MutablePriorityQueue, genTripcode
+from .util import MutablePriorityQueue, ScoreKeeper, genTripcode
 from .globals import *
 
 # module constants
@@ -34,17 +34,19 @@ assert len(set(CAPTIONABLE_TYPES).intersection(COPYABLE_TYPES)) == 0
 TMessage = telebot.types.Message
 
 # module variables
+
 bot: telebot.TeleBot = None
 db = None
 ch = None
 message_queue = MutablePriorityQueue()
+reply_ratelimiter = ScoreKeeper(MAX_REPLIES_PER_MINUTE, 0)
 registered_commands = {}
 
 # settings
 linked_network: Optional[dict] = None
 
 def init(config: dict, _db, _ch):
-	global bot, db, ch, message_queue, linked_network
+	global bot, db, ch, linked_network
 	if not config.get("bot_token") or ":" not in config["bot_token"]:
 		logging.error("No Telegram bot token specified")
 		exit(1)
@@ -109,6 +111,8 @@ def run():
 			time.sleep(1)
 
 def register_tasks(sched):
+	# reply rate-limit resets fully every minute
+	sched.register((lambda: reply_ratelimiter.decrease(9999)), minutes=1)
 	# cache expiration
 	def task():
 		ids = ch.expire()
@@ -163,6 +167,10 @@ def send_answer(ev: TMessage, m, reply_to=False):
 	elif isinstance(m, list):
 		for m2 in m:
 			send_answer(ev, m2, reply_to)
+		return
+
+	if not reply_ratelimiter.increase(ev.chat.id, 1):
+		logging.debug("Dropping reply due to rate limit: %r", m)
 		return
 
 	reply_to = ev.message_id if reply_to else None
