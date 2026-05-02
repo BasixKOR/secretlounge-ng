@@ -491,9 +491,9 @@ def check_telegram_exc(e: telebot.apihelper.ApiException, user_id):
 		return True # retry
 
 	if "Too Many Requests" in e.result.text:
-		d = json.loads(e.result.text)["parameters"]["retry_after"]
-		d = min(d, 30) # supposedly this is in seconds, but you sometimes get 100 or even 2000
-		logging.warning("API rate limit hit, waiting for %ds", d)
+		real_d = json.loads(e.result.text)["parameters"]["retry_after"]
+		d = min(real_d, 45) # sometimes we get 100 or even 2000, which seems too high, so don't trust this value too much
+		logging.warning("API rate limit hit, waiting for %ds (was %d)", d, real_d)
 		time.sleep(d)
 		return True # retry
 
