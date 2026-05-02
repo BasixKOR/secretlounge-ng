@@ -37,11 +37,11 @@ TMessage = telebot.types.Message
 bot: telebot.TeleBot = None
 db = None
 ch = None
-message_queue = None
+message_queue = MutablePriorityQueue()
 registered_commands = {}
 
 # settings
-linked_network: dict = None
+linked_network: Optional[dict] = None
 
 def init(config: dict, _db, _ch):
 	global bot, db, ch, message_queue, linked_network
@@ -55,7 +55,6 @@ def init(config: dict, _db, _ch):
 	bot = telebot.TeleBot(config["bot_token"], threaded=False)
 	db = _db
 	ch = _ch
-	message_queue = MutablePriorityQueue()
 
 	allow_contacts = config["allow_contacts"]
 	allow_documents = config["allow_documents"]
@@ -494,6 +493,9 @@ def check_telegram_exc(e: telebot.apihelper.ApiException, user_id):
 		real_d = json.loads(e.result.text)["parameters"]["retry_after"]
 		d = min(real_d, 45) # sometimes we get 100 or even 2000, which seems too high, so don't trust this value too much
 		logging.warning("API rate limit hit, waiting for %ds (was %d)", d, real_d)
+		# FIXME: ratelimits are not necessarily global for our bot account, but can also
+		# be specific to the user we're trying to send to.
+		# If this happens then there's no mechanism to put this "back" and deliver other queued stuff instead.
 		time.sleep(d)
 		return True # retry
 

@@ -62,6 +62,7 @@ class MutablePriorityQueue():
 				if selector(self.items[iid]):
 					del self.items[iid]
 
+# FIXME: replace this with the standard class
 class Enum():
 	def __init__(self, m, reverse=True):
 		assert len(set(m.values())) == len(m)
